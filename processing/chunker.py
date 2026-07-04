@@ -89,6 +89,7 @@ def chunk_document(text: str, doc_meta: dict) -> list[dict]:
         # Capture section header for citation metadata
         header_match = ARTICLE_RE.match(section)
         section_label = header_match.group(0) if header_match else f"part-{si}"
+        section_label = " ".join(section_label.split())  # normalize whitespace
         for ci, chunk in enumerate(window_chunk(section)):
             records.append({
                 "doc_id": doc_meta.get("id") or doc_meta.get("accession", "unknown"),

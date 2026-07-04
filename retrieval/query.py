@@ -30,27 +30,47 @@ SYSTEM_PROMPT = """You are RegLens, a regulatory research assistant. Answer the 
 - Note jurisdictional differences when sources span EU and US frameworks."""
 
 
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
 class RegLensEngine:
-    def __init__(self, model_key: str = "default"):
+    def __init__(self, model_key: str = "default", use_reranker: bool = True):
         import faiss
         from sentence_transformers import SentenceTransformer
 
         meta = json.loads((INDEX_DIR / f"meta_{model_key}.json").read_text())
         self.embedder = SentenceTransformer(meta["model"])
+        if use_reranker:
+            from sentence_transformers import CrossEncoder
+            self.reranker = CrossEncoder(RERANKER_MODEL, max_length=512)
+        else:
+            self.reranker = None
         self.index = faiss.read_index(str(INDEX_DIR / f"reglens_{model_key}.faiss"))
         self.chunks = json.loads((INDEX_DIR / f"chunks_{model_key}.json").read_text())
 
-    def retrieve(self, query: str, k: int = 6) -> list[dict]:
+    def retrieve(self, query: str, k: int = 6, fetch_k: int = 20) -> list[dict]:
+        # Stage 1: bi-encoder FAISS search over a wider candidate set
         q_emb = self.embedder.encode([query], normalize_embeddings=True).astype("float32")
-        scores, ids = self.index.search(q_emb, k)
-        results = []
+        actual_k = min(fetch_k if self.reranker else k, self.index.ntotal)
+        scores, ids = self.index.search(q_emb, actual_k)
+        candidates = []
         for score, idx in zip(scores[0], ids[0]):
             if idx == -1:
                 continue
             chunk = dict(self.chunks[idx])
-            chunk["score"] = float(score)
-            results.append(chunk)
-        return results
+            chunk["biencoder_score"] = float(score)
+            chunk["score"] = float(score)  # default score if no reranker
+            candidates.append(chunk)
+
+        # Stage 2: cross-encoder reranking — scores query+chunk jointly
+        if self.reranker:
+            pairs = [[query, c["text"]] for c in candidates]
+            ce_scores = self.reranker.predict(pairs)
+            for chunk, ce_score in zip(candidates, ce_scores):
+                chunk["score"] = float(ce_score)
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+
+        return candidates[:k]
 
     @staticmethod
     def _format_context(results: list[dict]) -> str:

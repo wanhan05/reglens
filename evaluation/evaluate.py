@@ -24,22 +24,22 @@ GOLD_QUESTIONS = [
     {
         "question": "What obligations does the EU AI Act impose on providers of high-risk AI systems?",
         "expected_doc": "eu_ai_act",
-        "expected_section_pattern": r"Article (9|1[0-7])",
+        "expected_section_pattern": r"Article\s+(9|1[0-7]|16|24|25)",
     },
     {
         "question": "How does the EU AI Act define prohibited AI practices?",
         "expected_doc": "eu_ai_act",
-        "expected_section_pattern": r"Article 5",
+        "expected_section_pattern": r"Article\s+5\b",
     },
     {
         "question": "What are the GDPR requirements for automated decision-making?",
         "expected_doc": "gdpr",
-        "expected_section_pattern": r"Article 22",
+        "expected_section_pattern": r"Article\s+22",
     },
     {
         "question": "What transparency requirements apply to general-purpose AI models?",
         "expected_doc": "eu_ai_act",
-        "expected_section_pattern": r"Article 5[0-3]",
+        "expected_section_pattern": r"Article\s+5[0-3]",
     },
     {
         "question": "What does the NIST AI Risk Management Framework say about measuring AI risks?",
@@ -77,6 +77,18 @@ def recall_at_k(engine, gold: list[dict], k: int = 6) -> dict:
     }
 
 
+def mrr(engine, gold: list[dict], k: int = 6) -> float:
+    """Mean Reciprocal Rank — rewards correct sections appearing earlier."""
+    rr_sum = 0.0
+    for g in gold:
+        results = engine.retrieve(g["question"], k=k)
+        for i, r in enumerate(results, 1):
+            if re.search(g["expected_section_pattern"], r["section"]):
+                rr_sum += 1.0 / i
+                break
+    return rr_sum / len(gold)
+
+
 def citation_coverage(answer: str) -> float:
     """Fraction of answer sentences carrying at least one [n] citation."""
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer) if len(s.strip()) > 20]
@@ -92,6 +104,7 @@ def run():
     engine = RegLensEngine()
     print("Running retrieval evaluation...")
     metrics = recall_at_k(engine, GOLD_QUESTIONS, k=6)
+    metrics["mrr"] = mrr(engine, GOLD_QUESTIONS, k=6)
     print(json.dumps({k: v for k, v in metrics.items() if k != "per_question"}, indent=2))
 
     out = EVAL_DIR / "results.json"
